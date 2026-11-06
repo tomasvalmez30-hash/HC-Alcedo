@@ -9,7 +9,7 @@
 //     -> zkoušet znovu každou hodinu, než se zápis na AHL.cz objeví
 //  4. data jsou starší než 6 hodin (průběžná aktualizace)   -> aktualizovat
 import { readFile, appendFile } from 'node:fs/promises';
-
+import { pathToFileURL } from 'node:url';
 const OUR = 'Alcedo';
 const AFTER_START_MIN = 90;
 const RETRY_EVERY_MIN = 60;
@@ -74,4 +74,4 @@ async function main() {
   else console.log(`run=${res.run}`);
 }
 
-if (import.meta.url === `file:///${process.argv[1].replace(/\\/g, '/')}`) main();
+if (import.meta.url === pathToFileURL(process.argv[1]).href) main();
