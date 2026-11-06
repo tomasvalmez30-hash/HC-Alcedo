@@ -1,0 +1,59 @@
+name: Aktualizace dat a nasazení
+
+# Každých 30 minut proběhne jen levná kontrola (scripts/should-update.mjs), která podle rozpisu rozhodne,
+# jestli se mají stáhnout data z AHL.cz a nasadit web:
+#   - 90 minut po začátku zápasu Alcedu (aby tam byl čerstvý zápis),
+#   - dokud se zápis k odehranému zápasu neobjeví na AHL.cz (zkouší to po hodině),
+#   - jinak aspoň každých 6 hodin.
+# Když se stažení nepovede nebo data vypadají podezřele, běh skončí chybou
+# (GitHub pošle e-mail) a na webu zůstanou předchozí data.
+on:
+  schedule:
+    - cron: '7,37 * * * *'
+  workflow_dispatch: {}   # ruční spuštění = vždy aktualizovat
+  push:
+    branches: [main]      # po nahrání změn kódu = vždy aktualizovat
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # předchozí data z běžícího webu: základ pro rozhodnutí i pro kontrolu, že nových dat nebylo méně
+      - name: Stáhnout aktuální data z webu
+        run: |
+          mkdir -p public/data
+          curl -fsS "https://${{ vars.FIREBASE_PROJECT_ID }}.web.app/data/data.json" -o public/data/data.json || echo "žádná předchozí data"
+
+      - name: Je čas aktualizovat?
+        id: gate
+        run: node scripts/should-update.mjs public/data/data.json ${{ github.event_name != 'schedule' && '--always' || '' }}
+
+      # starší zápasy se nemění, uložíme je do cache, ať se při každém běhu nestahují znovu
+      - uses: actions/cache@v4
+        if: steps.gate.outputs.run == 'true'
+        with:
+          path: scraper/.cache
+          key: zapasy-cache-${{ github.run_id }}
+          restore-keys: zapasy-cache-
+
+      - name: Stáhnout data z AHL.cz
+        if: steps.gate.outputs.run == 'true'
+        run: node scraper/scrape.mjs
+
+      - name: Nasadit na Firebase Hosting
+        if: steps.gate.outputs.run == 'true'
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          projectId: ${{ vars.FIREBASE_PROJECT_ID }}
+          channelId: live
